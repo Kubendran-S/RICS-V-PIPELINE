@@ -1,0 +1,288 @@
+////////////////// TOP OF MODULE /////////////////
+
+module pipeline_top (
+    input clk,
+    input reset,
+    output [31:0] debug_pc,
+    output [31:0] debug_ex_result
+);
+
+// Wires
+wire [31:0] if_pc, if_instr;
+wire [31:0] pd_pc, pd_instr;
+wire [31:0] id_pc, id_opA, id_opB;
+wire [4:0] id_rd;
+wire [31:0] ex_result;
+wire [4:0] ex_rd;
+wire [31:0] mem_result;
+wire [4:0] mem_rd;
+wire we;
+wire [4:0] wb_rd;
+wire [31:0] wb_data;
+
+reg [31:0] next_pc;
+
+// PC logic
+always @(posedge clk or posedge reset) begin
+    if (reset)
+        next_pc <= 0;
+    else
+        next_pc <= next_pc + 4;
+end
+
+// Stages
+IF_stage IF (
+    .clk(clk),
+    .reset(reset),
+    .next_pc(next_pc),
+    .pc(if_pc),
+    .instr(if_instr)
+);
+
+PD_stage PD (
+    .clk(clk),
+    .if_pc(if_pc),
+    .if_instr(if_instr),
+    .pd_pc(pd_pc),
+    .pd_instr(pd_instr)
+);
+
+ID_stage ID (
+    .clk(clk),
+    .pd_pc(pd_pc),
+    .pd_instr(pd_instr),
+    .we(we),
+    .wb_rd(wb_rd),
+    .wb_data(wb_data),
+    .id_pc(id_pc),
+    .id_opA(id_opA),
+    .id_opB(id_opB),
+    .id_rd(id_rd)
+);
+
+EX_stage EX (
+    .clk(clk),
+    .id_pc(id_pc),
+    .id_opA(id_opA),
+    .id_opB(id_opB),
+    .id_rd(id_rd),
+    .ex_result(ex_result),
+    .ex_rd(ex_rd)
+);
+
+MEM_stage MEM (
+    .clk(clk),
+    .ex_result(ex_result),
+    .ex_rd(ex_rd),
+    .mem_result(mem_result),
+    .mem_rd(mem_rd)
+);
+
+WB_stage WB (
+    .clk(clk),
+    .mem_result(mem_result),
+    .mem_rd(mem_rd),
+    .we(we),
+    .rd(wb_rd),
+    .wd(wb_data)
+);
+
+// 🔥 DEBUG SIGNALS (FIX)
+assign debug_pc = if_pc;
+assign debug_ex_result = ex_result;
+
+endmodule
+
+
+
+/////////////////////// IF STAGE ///////////////////////////
+
+
+module IF_stage (
+    input clk,
+    input reset,
+    input [31:0] next_pc,
+    output reg [31:0] pc,
+    output reg [31:0] instr
+);
+
+reg [31:0] imem[0:255];
+
+initial begin
+    imem[0] = 32'h002081B3;
+    imem[1] = 32'h00310233;
+    imem[2] = 32'h004182B3;
+    imem[3] = 32'h00000013;
+end
+
+always @(posedge clk or posedge reset) begin
+    if (reset) begin
+        pc <= 0;
+        instr <= 0;
+    end else begin
+        pc <= next_pc;
+        instr <= imem[next_pc[9:2]];
+    end
+end
+
+endmodule
+
+
+//////////////////////////////// PD STAGE ///////////////////////////
+
+module PD_stage (
+    input clk,
+    input [31:0] if_pc,
+    input [31:0] if_instr,
+    output reg [31:0] pd_pc,
+    output reg [31:0] pd_instr
+);
+
+always @(posedge clk) begin
+    pd_pc <= if_pc;
+    pd_instr <= if_instr;
+end
+
+endmodule
+
+
+//////////////////////////// ID STAGE ////////////////////////
+
+module ID_stage (
+    input clk,
+    input [31:0] pd_pc,
+    input [31:0] pd_instr,
+    input we,
+    input [4:0] wb_rd,
+    input [31:0] wb_data,
+    output reg [31:0] id_pc,
+    output reg [31:0] id_opA,
+    output reg [31:0] id_opB,
+    output reg [4:0] id_rd
+);
+
+reg [31:0] regfile[31:0];
+
+initial begin
+    regfile[1] = 10;
+    regfile[2] = 20;
+end
+
+wire [4:0] rs1 = pd_instr[19:15];
+wire [4:0] rs2 = pd_instr[24:20];
+wire [4:0] rd  = pd_instr[11:7];
+
+// Write Back
+always @(posedge clk) begin
+    if (we && wb_rd != 0)
+        regfile[wb_rd] <= wb_data;
+end
+
+// Read
+always @(posedge clk) begin
+    id_pc <= pd_pc;
+    id_opA <= regfile[rs1];
+    id_opB <= regfile[rs2];
+    id_rd <= rd;
+end
+
+endmodule 
+
+
+ ////////////////////// EX STAGE ///////////////////////////////
+
+module EX_stage (
+    input clk,
+    input [31:0] id_pc,
+    input [31:0] id_opA,
+    input [31:0] id_opB,
+    input [4:0] id_rd,
+    output reg [31:0] ex_result,
+    output reg [4:0] ex_rd
+);
+
+always @(posedge clk) begin
+    ex_result <= id_opA + id_opB;
+    ex_rd <= id_rd;
+end
+
+endmodule
+
+
+///////////////////////// MEM STAGE /////////////////////
+
+module MEM_stage (
+    input clk,
+    input [31:0] ex_result,
+    input [4:0] ex_rd,
+    output reg [31:0] mem_result,
+    output reg [4:0] mem_rd
+);
+
+always @(posedge clk) begin
+    mem_result <= ex_result;
+    mem_rd <= ex_rd;
+end
+
+endmodule
+
+///////////////// WB STAGE ////////////////////////// 
+
+module WB_stage (
+    input clk,
+    input [31:0] mem_result,
+    input [4:0] mem_rd,
+    output reg we,
+    output reg [4:0] rd,
+    output reg [31:0] wd
+);
+
+always @(posedge clk) begin
+    we <= 1;
+    rd <= mem_rd;
+    wd <= mem_result;
+end
+
+endmodule 
+
+////////////////////// TESTBENCH ///////////////////////////////
+
+`timescale 1ns/1ps
+
+module tb_pipeline;
+
+reg clk;
+reg reset;
+
+wire [31:0] debug_pc;
+wire [31:0] debug_ex_result;
+
+// Instantiate DUT
+pipeline_top uut (
+    .clk(clk),
+    .reset(reset),
+    .debug_pc(debug_pc),
+    .debug_ex_result(debug_ex_result)
+);
+
+// Clock
+always #5 clk = ~clk;
+
+initial begin
+    clk = 0;
+    reset = 1;
+
+    #10 reset = 0;
+
+    #200 $finish;
+end
+
+// Monitor output
+initial begin
+    $monitor("Time=%0t | PC=%h | EX_RESULT=%h",
+             $time,
+             debug_pc,
+             debug_ex_result);
+end
+
+endmodule
